@@ -45,6 +45,43 @@ web_venv\Scripts\python.exe web_server.py
 
 Open browser: `http://localhost:5000`
 
+## ⚙️ Configuration Setup
+
+**IMPORTANT**: Before running the scraper, you need to configure AWS credentials and EC2 settings.
+
+### Configuration File Setup:
+
+1. **Copy the configuration** from `config.txt` file
+2. **Paste the AWS credentials** into `web_server.py` at the top of the file:
+   - `AWS_ACCESS_KEY_ID` - Your AWS access key
+   - `AWS_SECRET_ACCESS_KEY` - Your AWS secret key
+   - `S3_BUCKET_NAME` - S3 bucket for articles (bockscraper)
+   - `S3_TEXT_BUCKET_NAME` - S3 bucket for converted text (bockscraper1)
+
+3. **Configure EC2 settings** (if using remote EC2):
+   - `EC2_HOST` - Your EC2 instance IP address
+   - `EC2_USER` - SSH username (usually `ec2-user`)
+   - `EC2_KEY_PATH` - Path to your .pem key file
+   - `EC2_SCRAPER_PATH` - Path to scraper on EC2
+   - `EC2_ENV_PATH` - Path to virtual environment on EC2
+
+**Example from config.txt:**
+```python
+# S3 Configuration
+S3_BUCKET_NAME = 'bockscraper'
+S3_TEXT_BUCKET_NAME = 'bockscraper1'
+AWS_ACCESS_KEY_ID = 'YOUR_AWS_ACCESS_KEY'
+AWS_SECRET_ACCESS_KEY = 'YOUR_AWS_SECRET_KEY'
+AWS_REGION = 'us-east-1'
+
+# EC2 Configuration (for remote scraping)
+EC2_HOST = "your.ec2.ip.address"
+EC2_USER = "ec2-user"
+EC2_KEY_PATH = r"C:\path\to\your-key.pem"
+```
+
+⚠️ **Security Note**: Never commit AWS credentials to git. Always use environment variables or config files that are git-ignored in production.
+
 ## 🏆 **Performance Results**
 
 - **100% Success Rate**: Both article discovery and image processing
