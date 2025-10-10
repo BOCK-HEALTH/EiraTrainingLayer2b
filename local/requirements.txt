@@ -1,0 +1,20 @@
+# BOCK Scraper - Web Interface Requirements
+# Flask web server dependencies for the scraping interface
+
+# Core web framework
+Flask>=2.3.0
+flask-cors>=4.0.0
+
+# SSH and file transfer for EC2 communication
+paramiko>=3.3.0
+
+# AWS S3 integration (for S3 bucket browser and file management)
+boto3>=1.28.0
+botocore>=1.31.0
+
+# Additional utilities
+pathlib2>=2.3.0
+
+# Note: These are only the dependencies for the web interface.
+# The EC2 scraper (ultimate_scraper_v2.py) has its own dependencies
+# that need to be installed on the EC2 instance.
