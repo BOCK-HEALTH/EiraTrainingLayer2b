@@ -27,20 +27,7 @@ app = Flask(__name__)
 CORS(app)
 
 #copy paste this from config.txt
-# Configuration
-EC2_HOST = "54.82.140.246"
-EC2_USER = "ec2-user" 
-EC2_KEY_PATH = r"C:\Internship\key-scraper.pem"
-EC2_SCRAPER_PATH = "/home/ec2-user/ultimate_scraper_v2.py"
-EC2_ENV_PATH = "/home/ec2-user/ultimate_scraper_env/bin/activate"
 
-# S3 Configuration
-S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', 'bockscraper')
-S3_TEXT_BUCKET_NAME = 'bockscraper1'  # Hard-coded for text conversion
-S3_SUMMARY_BUCKET_NAME = 'bockscraper2'  # Hard-coded for AI summaries
-AWS_ACCESS_KEY_ID = 'AKIA5IK3AWDAR7R2ZCOE'  # Hard-coded AWS credentials
-AWS_SECRET_ACCESS_KEY = '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'  # Hard-coded AWS credentials
-AWS_REGION = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
 
 
 # Global state for scraping
