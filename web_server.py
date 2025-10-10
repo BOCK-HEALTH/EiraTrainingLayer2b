@@ -27,7 +27,20 @@ app = Flask(__name__)
 CORS(app)
 
 #copy paste this from config.txt
+# Configuration
+EC2_HOST = "54.82.140.246"
+EC2_USER = "ec2-user" 
+EC2_KEY_PATH = r"C:\Internship\key-scraper.pem"
+EC2_SCRAPER_PATH = "/home/ec2-user/ultimate_scraper_v2.py"
+EC2_ENV_PATH = "/home/ec2-user/ultimate_scraper_env/bin/activate"
 
+# S3 Configuration
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', 'bockscraper')
+S3_TEXT_BUCKET_NAME = 'bockscraper1'  # Hard-coded for text conversion
+S3_SUMMARY_BUCKET_NAME = 'bockscraper2'  # Hard-coded for AI summaries
+AWS_ACCESS_KEY_ID = 'AKIA5IK3AWDAR7R2ZCOE'  # Hard-coded AWS credentials
+AWS_SECRET_ACCESS_KEY = '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'  # Hard-coded AWS credentials
+AWS_REGION = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
 
 
 # Global state for scraping
@@ -558,7 +571,13 @@ def _run_summarization(source_session, input_bucket, output_bucket):
         add_summarization_log("Running AI processing locally...", "info")
         
         # Add summary module to Python path
-        summary_path = os.path.join(os.path.dirname(__file__), 'summary', 'bocksummarizer-main')
+        summary_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'summary', 'bocksummarizer-main')
+        if not os.path.exists(summary_path):
+            add_summarization_log(f"Error: Summarizer module not found at {summary_path}", "error")
+            summarization_stats['error'] = "Summarizer module not found"
+            summarization_active = False
+            return
+            
         sys.path.insert(0, summary_path)
         
         # Set AWS environment variables
@@ -573,7 +592,6 @@ def _run_summarization(source_session, input_bucket, output_bucket):
                 _load_text_from_json, summarize_text_content, caption_image,
                 _derive_text_output_key, _derive_image_output_key
             )
-            import tempfile
         except ImportError as e:
             add_summarization_log(f"ERROR: Cannot import summarization module: {e}", "error")
             summarization_stats['error'] = str(e)
@@ -585,7 +603,18 @@ def _run_summarization(source_session, input_bucket, output_bucket):
         
         # Process only the specific session
         session_prefix = f"{source_session}/"
-        folders = list_folders(input_bucket, prefix=session_prefix)
+        add_summarization_log(f"Looking for folders with prefix: {session_prefix}", "info")
+        
+        try:
+            folders = list_folders(input_bucket, prefix=session_prefix)
+        except Exception as e:
+            add_summarization_log(f"Error listing folders: {e}", "error")
+            import traceback
+            add_summarization_log(f"Traceback: {traceback.format_exc()}", "error")
+            summarization_stats['error'] = str(e)
+            summarization_active = False
+            sys.path.remove(summary_path)
+            return
         
         if not folders:
             add_summarization_log(f"No folders found for session: {source_session}", "warning")
@@ -603,26 +632,57 @@ def _run_summarization(source_session, input_bucket, output_bucket):
         text_model = "facebook/bart-large-cnn"
         image_model = "nlpconnect/vit-gpt2-image-captioning"
         
+        add_summarization_log(f"Starting to process folders with models loaded", "info")
+        
         for idx, folder in enumerate(folders, 1):
-            folder_name = folder.rstrip('/')
-            add_summarization_log(f"Processing folder {idx}/{len(folders)}: {folder_name}", "info")
-            summarization_stats['totalFolders'] = idx
-            
-            # Text JSON files
-            json_files = list_files_in_folder(input_bucket, folder, extensions=(".json",))
-            json_files = [k for k in json_files if not k.lower().endswith(("_summary.json", "_text_summary.json"))]
+            try:
+                folder_name = folder.rstrip('/')
+                add_summarization_log(f"Processing folder {idx}/{len(folders)}: {folder_name}", "info")
+                summarization_stats['totalFolders'] = idx
+                
+                # Text JSON files
+                add_summarization_log(f"  Listing JSON files in folder...", "info")
+                try:
+                    json_files = list_files_in_folder(input_bucket, folder, extensions=(".json",))
+                    json_files = [k for k in json_files if not k.lower().endswith(("_summary.json", "_text_summary.json"))]
+                    add_summarization_log(f"  Found {len(json_files)} JSON files", "info")
+                except Exception as list_error:
+                    add_summarization_log(f"  ERROR listing files: {list_error}", "error")
+                    import traceback
+                    add_summarization_log(f"  Full trace: {traceback.format_exc()}", "error")
+                    raise
+            except Exception as e:
+                add_summarization_log(f"Error in folder processing setup: {e}", "error")
+                import traceback
+                add_summarization_log(f"Traceback: {traceback.format_exc()}", "error")
+                continue
             
             for json_key in json_files:
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    local_json = os.path.join(tmpdir, os.path.basename(json_key))
-                    if not download_file(input_bucket, json_key, local_json):
+                # Use a simpler temp file approach for Windows compatibility
+                temp_file = None
+                try:
+                    add_summarization_log(f"  Processing JSON: {os.path.basename(json_key)}", "info")
+                    
+                    # Create temp directory if it doesn't exist
+                    temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp")
+                    os.makedirs(temp_dir, exist_ok=True)
+                    
+                    # Create temp file with .json extension in our controlled directory
+                    temp_file = os.path.join(temp_dir, f"temp_{int(time.time())}_{os.path.basename(json_key)}")
+                    temp_file = os.path.normpath(temp_file)
+                    add_summarization_log(f"  Created temp file: {temp_file}", "info")
+                    
+                    if not download_file(input_bucket, json_key, temp_file):
+                        add_summarization_log(f"  Failed to download {json_key}", "warning")
                         continue
                     
-                    text = _load_text_from_json(local_json)
+                    add_summarization_log(f"  Downloaded successfully, loading text...", "info")
+                    text = _load_text_from_json(temp_file)
                     if not text:
                         add_summarization_log(f"  Skipped {os.path.basename(json_key)} (empty)", "warning")
                         continue
                     
+                    add_summarization_log(f"  Text loaded, generating summary...", "info")
                     try:
                         summary = summarize_text_content(text, text_model)
                         out_doc = {
@@ -639,19 +699,53 @@ def _run_summarization(source_session, input_bucket, output_bucket):
                         add_summarization_log(f"  ✓ Text summary saved", "success")
                     except Exception as e:
                         add_summarization_log(f"  ✗ Error summarizing text: {e}", "error")
+                        import traceback
+                        add_summarization_log(f"  Traceback: {traceback.format_exc()}", "error")
+                except Exception as e:
+                    add_summarization_log(f"  ✗ Error processing JSON {json_key}: {e}", "error")
+                    import traceback
+                    add_summarization_log(f"  Traceback: {traceback.format_exc()}", "error")
+                finally:
+                    # Clean up temp file
+                    if temp_file and os.path.exists(temp_file):
+                        try:
+                            os.unlink(temp_file)
+                        except Exception:
+                            pass
             
             # Image files
-            image_files = list_files_in_folder(input_bucket, folder, extensions=(".jpg", ".jpeg", ".png"))
-            multiple_images = len(image_files) > 1
+            add_summarization_log(f"  Listing image files in folder...", "info")
+            try:
+                image_files = list_files_in_folder(input_bucket, folder, extensions=(".jpg", ".jpeg", ".png"))
+                multiple_images = len(image_files) > 1
+                add_summarization_log(f"  Found {len(image_files)} image files", "info")
+            except Exception as e:
+                add_summarization_log(f"  Error listing images: {e}", "error")
+                continue
             
             for image_key in image_files:
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    local_image = os.path.join(tmpdir, os.path.basename(image_key))
-                    if not download_file(input_bucket, image_key, local_image):
+                # Use a simpler temp file approach for Windows compatibility
+                temp_file = None
+                try:
+                    add_summarization_log(f"  Processing image: {os.path.basename(image_key)}", "info")
+                    
+                    # Create temp directory if it doesn't exist
+                    temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp")
+                    os.makedirs(temp_dir, exist_ok=True)
+                    
+                    # Get file extension
+                    ext = os.path.splitext(image_key)[1] or '.jpg'
+                    temp_file = os.path.join(temp_dir, f"temp_{int(time.time())}_{os.path.basename(image_key)}")
+                    temp_file = os.path.normpath(temp_file)
+                    add_summarization_log(f"  Created temp file: {temp_file}", "info")
+                    
+                    if not download_file(input_bucket, image_key, temp_file):
+                        add_summarization_log(f"  Failed to download {image_key}", "warning")
                         continue
                     
+                    add_summarization_log(f"  Downloaded successfully, generating caption...", "info")
                     try:
-                        caption = caption_image(local_image, image_model)
+                        caption = caption_image(temp_file, image_model)
                         out_doc = {
                             "filename": os.path.basename(image_key),
                             "summary_type": "image",
@@ -666,6 +760,19 @@ def _run_summarization(source_session, input_bucket, output_bucket):
                         add_summarization_log(f"  ✓ Image caption saved", "success")
                     except Exception as e:
                         add_summarization_log(f"  ✗ Error captioning image: {e}", "error")
+                        import traceback
+                        add_summarization_log(f"  Traceback: {traceback.format_exc()}", "error")
+                except Exception as e:
+                    add_summarization_log(f"  ✗ Error processing image {image_key}: {e}", "error")
+                    import traceback
+                    add_summarization_log(f"  Traceback: {traceback.format_exc()}", "error")
+                finally:
+                    # Clean up temp file
+                    if temp_file and os.path.exists(temp_file):
+                        try:
+                            os.unlink(temp_file)
+                        except Exception:
+                            pass
         
         add_summarization_log("✅ AI summarization completed successfully!", "success")
         add_summarization_log(f"Text summaries: {text_count}", "success")
@@ -678,6 +785,12 @@ def _run_summarization(source_session, input_bucket, output_bucket):
     except Exception as e:
         error_msg = f"Summarization error: {str(e)}"
         add_summarization_log(error_msg, "error")
+        
+        # Add detailed traceback
+        import traceback
+        tb = traceback.format_exc()
+        add_summarization_log(f"Full traceback: {tb}", "error")
+        
         summarization_stats['error'] = str(e)
         if summary_path in sys.path:
             sys.path.remove(summary_path)
@@ -838,7 +951,7 @@ def list_bucket():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/download_file', methods=['POST'])
-def download_file():
+def download_s3_file():
     """Download a file from S3"""
     try:
         data = request.json

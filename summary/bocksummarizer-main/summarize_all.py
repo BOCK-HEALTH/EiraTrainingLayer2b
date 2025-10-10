@@ -212,10 +212,11 @@ def _init_image_captioner(model_name: str):
     from transformers import pipeline, AutoProcessor, VisionEncoderDecoderModel
     _print(f"    [INFO] Loading image model: {model_name} ...")
     # Use pipeline 'image-to-text' which internally handles processor/model combo
+    # Force CPU usage to avoid CUDA errors
     _IMAGE_CAPTION_PIPELINE = pipeline(
         task="image-to-text",
         model=model_name,
-        device_map=_device_map_or_none(),
+        device="cpu",  # Explicitly use CPU instead of GPU
     )
     return _IMAGE_CAPTION_PIPELINE
 
