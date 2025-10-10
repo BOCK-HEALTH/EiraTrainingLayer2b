@@ -5,9 +5,11 @@ Flask server for managing EC2 scraping jobs with S3 integration
 """
 
 import os
+import sys
 import json
 import time
 import threading
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory
@@ -25,7 +27,20 @@ app = Flask(__name__)
 CORS(app)
 
 #copy paste this from config.txt
+# Configuration
+EC2_HOST = "54.82.140.246"
+EC2_USER = "ec2-user" 
+EC2_KEY_PATH = r"C:\Internship\key-scraper.pem"
+EC2_SCRAPER_PATH = "/home/ec2-user/ultimate_scraper_v2.py"
+EC2_ENV_PATH = "/home/ec2-user/ultimate_scraper_env/bin/activate"
 
+# S3 Configuration
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', 'bockscraper')
+S3_TEXT_BUCKET_NAME = 'bockscraper1'  # Hard-coded for text conversion
+S3_SUMMARY_BUCKET_NAME = 'bockscraper2'  # Hard-coded for AI summaries
+AWS_ACCESS_KEY_ID = 'AKIA5IK3AWDAR7R2ZCOE'  # Hard-coded AWS credentials
+AWS_SECRET_ACCESS_KEY = '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'  # Hard-coded AWS credentials
+AWS_REGION = os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
 
 
 # Global state for scraping
@@ -48,6 +63,18 @@ conversion_stats = {
     'completed': False,
     'error': None,
     'targetBucket': None
+}
+
+# Global state for AI summarization
+summarization_active = False
+summarization_logs = []
+summarization_stats = {
+    'completed': False,
+    'error': None,
+    'targetBucket': S3_SUMMARY_BUCKET_NAME,
+    'textSummaries': 0,
+    'imageSummaries': 0,
+    'totalFolders': 0
 }
 
 def add_log(message, log_type="info"):
@@ -79,6 +106,21 @@ def add_conversion_log(message, log_type="info"):
     # Keep only last 200 log entries
     if len(conversion_logs) > 200:
         conversion_logs.pop(0)
+
+def add_summarization_log(message, log_type="info"):
+    """Add a log message to the summarization log list"""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    log_entry = {
+        'timestamp': timestamp,
+        'message': message,
+        'type': log_type
+    }
+    summarization_logs.append(log_entry)
+    logger.info(f"[SUMMARIZE][{log_type}] {message}")
+    
+    # Keep only last 300 log entries
+    if len(summarization_logs) > 300:
+        summarization_logs.pop(0)
 
 class ScrapingJob:
     def __init__(self, url, max_articles):
@@ -227,6 +269,11 @@ rm -rf {remote_output_path}
 def index():
     """Serve the main interface"""
     return send_from_directory('.', 'index.html')
+
+@app.route('/Health Text-01.png')
+def serve_logo():
+    """Serve the logo image"""
+    return send_from_directory('.', 'Health Text-01.png')
 
 @app.route('/start_scraping', methods=['POST'])
 def start_scraping():
@@ -513,6 +560,144 @@ subprocess.run(f'rm -rf {{temp_dir}}', shell=True)
     finally:
         conversion_active = False
 
+def _run_summarization(source_session, input_bucket, output_bucket):
+    """Run the AI summarization using summary folder code"""
+    global summarization_active, summarization_stats
+    
+    try:
+        add_summarization_log(f"Starting AI summarization for session: {source_session}", "info")
+        add_summarization_log(f"Input bucket: {input_bucket}", "info")
+        add_summarization_log(f"Output bucket: {output_bucket}", "info")
+        add_summarization_log("Running AI processing locally...", "info")
+        
+        # Add summary module to Python path
+        summary_path = os.path.join(os.path.dirname(__file__), 'summary', 'bocksummarizer-main')
+        sys.path.insert(0, summary_path)
+        
+        # Set AWS environment variables
+        os.environ['AWS_ACCESS_KEY_ID'] = AWS_ACCESS_KEY_ID
+        os.environ['AWS_SECRET_ACCESS_KEY'] = AWS_SECRET_ACCESS_KEY
+        os.environ['AWS_REGION'] = AWS_REGION
+        
+        try:
+            # Import summarization functions
+            from summarize_all import (
+                list_folders, list_files_in_folder, download_file, upload_bytes,
+                _load_text_from_json, summarize_text_content, caption_image,
+                _derive_text_output_key, _derive_image_output_key
+            )
+            import tempfile
+        except ImportError as e:
+            add_summarization_log(f"ERROR: Cannot import summarization module: {e}", "error")
+            summarization_stats['error'] = str(e)
+            summarization_active = False
+            sys.path.remove(summary_path)
+            return
+        
+        add_summarization_log("⚠ First run will download AI models (~2GB), please be patient", "warning")
+        
+        # Process only the specific session
+        session_prefix = f"{source_session}/"
+        folders = list_folders(input_bucket, prefix=session_prefix)
+        
+        if not folders:
+            add_summarization_log(f"No folders found for session: {source_session}", "warning")
+            summarization_stats['completed'] = True
+            summarization_active = False
+            sys.path.remove(summary_path)
+            return
+        
+        add_summarization_log(f"Found {len(folders)} folders to process", "info")
+        
+        text_count = 0
+        image_count = 0
+        
+        # Models to use
+        text_model = "facebook/bart-large-cnn"
+        image_model = "nlpconnect/vit-gpt2-image-captioning"
+        
+        for idx, folder in enumerate(folders, 1):
+            folder_name = folder.rstrip('/')
+            add_summarization_log(f"Processing folder {idx}/{len(folders)}: {folder_name}", "info")
+            summarization_stats['totalFolders'] = idx
+            
+            # Text JSON files
+            json_files = list_files_in_folder(input_bucket, folder, extensions=(".json",))
+            json_files = [k for k in json_files if not k.lower().endswith(("_summary.json", "_text_summary.json"))]
+            
+            for json_key in json_files:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    local_json = os.path.join(tmpdir, os.path.basename(json_key))
+                    if not download_file(input_bucket, json_key, local_json):
+                        continue
+                    
+                    text = _load_text_from_json(local_json)
+                    if not text:
+                        add_summarization_log(f"  Skipped {os.path.basename(json_key)} (empty)", "warning")
+                        continue
+                    
+                    try:
+                        summary = summarize_text_content(text, text_model)
+                        out_doc = {
+                            "filename": os.path.basename(json_key),
+                            "summary_type": "text",
+                            "summary": summary,
+                        }
+                        out_bytes = json.dumps(out_doc, ensure_ascii=False, indent=2).encode("utf-8")
+                        out_key = _derive_text_output_key(json_key)
+                        upload_bytes(output_bucket, out_key, out_bytes)
+                        
+                        text_count += 1
+                        summarization_stats['textSummaries'] = text_count
+                        add_summarization_log(f"  ✓ Text summary saved", "success")
+                    except Exception as e:
+                        add_summarization_log(f"  ✗ Error summarizing text: {e}", "error")
+            
+            # Image files
+            image_files = list_files_in_folder(input_bucket, folder, extensions=(".jpg", ".jpeg", ".png"))
+            multiple_images = len(image_files) > 1
+            
+            for image_key in image_files:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    local_image = os.path.join(tmpdir, os.path.basename(image_key))
+                    if not download_file(input_bucket, image_key, local_image):
+                        continue
+                    
+                    try:
+                        caption = caption_image(local_image, image_model)
+                        out_doc = {
+                            "filename": os.path.basename(image_key),
+                            "summary_type": "image",
+                            "summary": caption,
+                        }
+                        out_bytes = json.dumps(out_doc, ensure_ascii=False, indent=2).encode("utf-8")
+                        out_key = _derive_image_output_key(image_key, multiple_images)
+                        upload_bytes(output_bucket, out_key, out_bytes)
+                        
+                        image_count += 1
+                        summarization_stats['imageSummaries'] = image_count
+                        add_summarization_log(f"  ✓ Image caption saved", "success")
+                    except Exception as e:
+                        add_summarization_log(f"  ✗ Error captioning image: {e}", "error")
+        
+        add_summarization_log("✅ AI summarization completed successfully!", "success")
+        add_summarization_log(f"Text summaries: {text_count}", "success")
+        add_summarization_log(f"Image summaries: {image_count}", "success")
+        summarization_stats['completed'] = True
+        
+        # Remove from path
+        sys.path.remove(summary_path)
+        
+    except Exception as e:
+        error_msg = f"Summarization error: {str(e)}"
+        add_summarization_log(error_msg, "error")
+        summarization_stats['error'] = str(e)
+        if summary_path in sys.path:
+            sys.path.remove(summary_path)
+    
+    finally:
+        summarization_active = False
+
 @app.route('/conversion_status', methods=['GET'])
 def conversion_status():
     """Get conversion status and logs"""
@@ -523,6 +708,68 @@ def conversion_status():
         'completed': conversion_stats.get('completed', False),
         'error': conversion_stats.get('error'),
         'targetBucket': conversion_stats.get('targetBucket')
+    }
+    
+    return jsonify(response_data)
+
+@app.route('/generate_summaries', methods=['POST'])
+def generate_summaries():
+    """Generate AI summaries for articles and images"""
+    global summarization_active, summarization_logs, summarization_stats
+    
+    if summarization_active:
+        return jsonify({'error': 'Summarization already in progress'}), 400
+    
+    try:
+        data = request.json
+        source_session = data.get('sourceSession')
+        
+        if not source_session:
+            return jsonify({'error': 'Source session is required'}), 400
+        
+        # Use hard-coded buckets
+        input_bucket = S3_BUCKET_NAME
+        output_bucket = S3_SUMMARY_BUCKET_NAME
+        
+        # Reset summarization state
+        summarization_logs = []
+        summarization_stats = {
+            'completed': False,
+            'error': None,
+            'targetBucket': output_bucket,
+            'textSummaries': 0,
+            'imageSummaries': 0,
+            'totalFolders': 0
+        }
+        summarization_active = True
+        
+        # Start summarization in a separate thread
+        thread = threading.Thread(
+            target=_run_summarization,
+            args=(source_session, input_bucket, output_bucket)
+        )
+        thread.start()
+        
+        return jsonify({'message': 'Summarization started successfully'})
+        
+    except Exception as e:
+        error_msg = f"Error starting summarization: {str(e)}"
+        add_summarization_log(error_msg, "error")
+        return jsonify({'error': error_msg}), 500
+
+@app.route('/summarization_status', methods=['GET'])
+def summarization_status():
+    """Get summarization status and logs"""
+    global summarization_logs, summarization_stats
+    
+    response_data = {
+        'logs': summarization_logs,
+        'completed': summarization_stats.get('completed', False),
+        'error': summarization_stats.get('error'),
+        'targetBucket': summarization_stats.get('targetBucket'),
+        'textSummaries': summarization_stats.get('textSummaries', 0),
+        'imageSummaries': summarization_stats.get('imageSummaries', 0),
+        'totalFolders': summarization_stats.get('totalFolders', 0)
     }
     
     return jsonify(response_data)
@@ -657,18 +904,18 @@ if __name__ == '__main__':
     add_log(f"S3 Bucket: {S3_BUCKET_NAME}", "info")
     
     print("=" * 80)
-    print("🚀 BOCK SCRAPER - WEB INTERFACE")
+    print("BOCK SCRAPER - WEB INTERFACE")
     print("=" * 80)
-    print(f"🌐 Open your browser and go to: http://localhost:5000")
-    print(f"☁️  EC2 Instance: {EC2_HOST}")
-    print(f"📦 S3 Bucket: {S3_BUCKET_NAME}")
+    print(f"Open your browser and go to: http://localhost:5000")
+    print(f"EC2 Instance: {EC2_HOST}")
+    print(f"S3 Bucket: {S3_BUCKET_NAME}")
     print("=" * 80)
     
     try:
         app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
     except KeyboardInterrupt:
-        print("\n\n🛑 Server stopped by user")
+        print("\n\nServer stopped by user")
         if current_job and scraping_active:
             current_job.stop()
     except Exception as e:
-        print(f"\n❌ Server error: {e}")
+        print(f"\nServer error: {e}")

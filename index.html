@@ -13,7 +13,7 @@
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #F5C242 0%, #8E8E8E 50%, #3C3C3C 100%);
             min-height: 100vh;
             padding: 20px;
         }
@@ -225,7 +225,7 @@
         }
 
         .download-btn {
-            background: #3498db;
+            background: #011929;
             color: white;
             border: none;
             padding: 8px 16px;
@@ -581,7 +581,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🚀 BOCK Scraper</h1>
+            <img src="Health Text-01.png" alt="BOCK Scraper" style="max-height: 80px; margin-bottom: 10px;">
             <p>Web Scraping & Data Processing Control Panel</p>
             <button class="view-bucket-btn" onclick="toggleBucketDropdown()">
                 📁 View Bucket
@@ -593,13 +593,16 @@
                 <div class="bucket-option" onclick="openBucketModal('bockscraper1')">
                     📄 bockscraper1 (Text Files)
                 </div>
+                <div class="bucket-option" onclick="openBucketModal('bockscraper2')">
+                    🤖 bockscraper2 (AI Summaries)
+                </div>
             </div>
         </div>
 
         <div class="tabs">
             <button class="tab active" onclick="openTab(event, 'tab1')">📊 Scrape Articles</button>
             <button class="tab" onclick="openTab(event, 'tab2')">📝 Convert to Text</button>
-            <button class="tab" onclick="openTab(event, 'tab3')">🔧 Future Features</button>
+            <button class="tab" onclick="openTab(event, 'tab3')">🤖 AI Summarization</button>
         </div>
 
         <!-- Tab 1: Scraping -->
@@ -689,12 +692,64 @@
             </div>
         </div>
 
-        <!-- Tab 3: Future Features -->
+        <!-- Tab 3: AI Summarization -->
         <div id="tab3" class="tab-content">
-            <div class="empty-tab">
-                <h2>🔧 Future Features</h2>
-                <p>This section is reserved for additional features.</p>
-                <p style="margin-top: 20px; color: #95a5a6;">Anupama summary deployment here...</p>
+            <div class="convert-section">
+                <h2>🤖 AI Summarization</h2>
+                <p>Generate AI-powered summaries for both article text and images using advanced deep learning models.</p>
+                
+                <div class="convert-form">
+                    <div class="info-box">
+                        <p><strong>ℹ️ How it works:</strong> This uses BART (text) and ViT-GPT2 (images) models to create concise summaries.</p>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="summarySession">Source Session ID (from scraping)</label>
+                        <input type="text" id="summarySession" placeholder="session_1234567890" required>
+                    </div>
+                    
+                    <div class="info-box" style="background: #e8f4f8; border-left-color: #3498db;">
+                        <p><strong>📥 Input Bucket:</strong> <code>bockscraper</code> (scraped articles)</p>
+                    </div>
+                    
+                    <div class="info-box" style="background: #e8f8f5; border-left-color: #27ae60;">
+                        <p><strong>📤 Output Bucket:</strong> <code>bockscraper2</code> (AI summaries)</p>
+                        <p style="margin-top: 10px; font-size: 0.9em;">Each article folder will contain:</p>
+                        <ul style="margin: 5px 0 0 20px; font-size: 0.9em;">
+                            <li><code>article_text_summary.json</code> - Text summary</li>
+                            <li><code>image_summary.json</code> - Image caption</li>
+                        </ul>
+                    </div>
+                    
+                    <button type="button" class="btn btn-primary" id="summarizeBtn" onclick="startSummarization()">
+                        🤖 Generate AI Summaries
+                    </button>
+                    
+                    <!-- Statistics Display -->
+                    <div id="summaryStatsContainer" style="margin-top: 20px; display: none;">
+                        <div class="stats-grid" style="grid-template-columns: repeat(3, 1fr);">
+                            <div class="stat-box">
+                                <div class="value" id="textSummaries">0</div>
+                                <div class="label">Text Summaries</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="value" id="imageSummaries">0</div>
+                                <div class="label">Image Captions</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="value" id="foldersProcessed">0</div>
+                                <div class="label">Folders Processed</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="log-container" id="summaryLogContainer" style="margin-top: 20px; height: 400px;">
+                        <div class="log-line info">🤖 AI Summarization Ready</div>
+                        <div class="log-line info">Using BART (facebook/bart-large-cnn) for text</div>
+                        <div class="log-line info">Using ViT-GPT2 (nlpconnect/vit-gpt2-image-captioning) for images</div>
+                        <div class="log-line info">Ready to generate summaries...</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -877,6 +932,7 @@
                             addLog('Scraping completed successfully!', 'success');
                             addLog(`Session ID: ${data.sessionId}`, 'info');
                             document.getElementById('sourceSession').value = data.sessionId;
+                            document.getElementById('summarySession').value = data.sessionId;
                             resetScrapingState();
                         }
                     }
@@ -1183,6 +1239,133 @@
             const date = new Date(dateString);
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
         }
+
+        // AI Summarization Functions
+        function addSummaryLog(message, type = 'info') {
+            const logContainer = document.getElementById('summaryLogContainer');
+            const logLine = document.createElement('div');
+            logLine.className = `log-line ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            logLine.textContent = `[${timestamp}] ${message}`;
+            logContainer.appendChild(logLine);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        async function startSummarization() {
+            const sourceSession = document.getElementById('summarySession').value;
+            
+            if (!sourceSession) {
+                alert('Please enter the source session ID!');
+                return;
+            }
+            
+            const summarizeBtn = document.getElementById('summarizeBtn');
+            summarizeBtn.disabled = true;
+            summarizeBtn.innerHTML = '<span class="spinner"></span> Generating AI Summaries...';
+            
+            // Show stats container
+            document.getElementById('summaryStatsContainer').style.display = 'block';
+            
+            document.getElementById('summaryLogContainer').innerHTML = '';
+            lastSummaryLogIndex = 0;
+            addSummaryLog('Starting AI summarization process...', 'info');
+            addSummaryLog('⚠️ This may take several minutes, especially on first run', 'warning');
+            
+            try {
+                const response = await fetch('/generate_summaries', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sourceSession: sourceSession
+                    })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    addSummaryLog('Summarization started successfully!', 'success');
+                    
+                    // Poll for summarization status
+                    pollSummarizationStatus();
+                } else {
+                    const error = await response.json();
+                    addSummaryLog('Error: ' + error.error, 'error');
+                    summarizeBtn.disabled = false;
+                    summarizeBtn.innerHTML = '🤖 Generate AI Summaries';
+                }
+            } catch (error) {
+                addSummaryLog('Error: ' + error.message, 'error');
+                summarizeBtn.disabled = false;
+                summarizeBtn.innerHTML = '🤖 Generate AI Summaries';
+            }
+        }
+
+        // Poll summarization status
+        let summarizationPolling = false;
+        let lastSummaryLogIndex = 0;
+        
+        function pollSummarizationStatus() {
+            if (summarizationPolling) return; // Prevent multiple polls
+            summarizationPolling = true;
+            
+            const pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/summarization_status');
+                    if (response.ok) {
+                        const data = await response.json();
+                        
+                        // Update statistics
+                        document.getElementById('textSummaries').textContent = data.textSummaries || 0;
+                        document.getElementById('imageSummaries').textContent = data.imageSummaries || 0;
+                        document.getElementById('foldersProcessed').textContent = data.totalFolders || 0;
+                        
+                        // Add only new logs
+                        if (data.logs && data.logs.length > lastSummaryLogIndex) {
+                            for (let i = lastSummaryLogIndex; i < data.logs.length; i++) {
+                                const log = data.logs[i];
+                                addSummaryLog(log.message, log.type);
+                            }
+                            lastSummaryLogIndex = data.logs.length;
+                        }
+                        
+                        if (data.completed) {
+                            clearInterval(pollInterval);
+                            summarizationPolling = false;
+                            lastSummaryLogIndex = 0;
+                            
+                            const summarizeBtn = document.getElementById('summarizeBtn');
+                            summarizeBtn.disabled = false;
+                            summarizeBtn.innerHTML = '🤖 Generate AI Summaries';
+                            
+                            addSummaryLog('✅ All summaries generated successfully!', 'success');
+                        }
+                        
+                        if (data.error) {
+                            clearInterval(pollInterval);
+                            summarizationPolling = false;
+                            lastSummaryLogIndex = 0;
+                            
+                            const summarizeBtn = document.getElementById('summarizeBtn');
+                            summarizeBtn.disabled = false;
+                            summarizeBtn.innerHTML = '🤖 Generate AI Summaries';
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error polling summarization:', error);
+                }
+            }, 3000); // Poll every 3 seconds (AI processing takes longer)
+        }
+
+        // Auto-populate summary session from scraping
+        function autoFillSummarySession(sessionId) {
+            if (sessionId) {
+                document.getElementById('summarySession').value = sessionId;
+            }
+        }
+
+        // Update the scraping completion handler to auto-fill summary session
+        const originalGetStatus = window.fetch;
     </script>
 </body>
 </html>
