@@ -1,0 +1,107 @@
+================================================================================
+BOCK SCRAPER - LOCAL SETUP INSTRUCTIONS
+================================================================================
+
+IMPORTANT: Install dependencies in the virtual environment!
+
+STEP 1: Activate your virtual environment
+------------------------------------------
+Windows PowerShell:
+    & c:/Internship/BOCK/local1/web_venv/Scripts/Activate.ps1
+
+Linux/Mac:
+    source web_venv/bin/activate
+
+STEP 2: Install all dependencies
+----------------------------------
+OPTION A - Use the installer script (RECOMMENDED):
+    Windows: Run install_dependencies.bat
+    Linux/Mac: bash install_dependencies.sh
+
+OPTION B - Manual installation:
+    pip install -r requirements.txt
+
+STEP 3: Start the web server
+------------------------------
+    python web_server_local.py
+
+STEP 4: Open your browser
+--------------------------
+    Go to: http://localhost:5000
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Problem: "ModuleNotFoundError: No module named 'trafilatura'"
+Solution: Make sure you activated the virtual environment BEFORE installing!
+    1. & c:/Internship/BOCK/local1/web_venv/Scripts/Activate.ps1
+    2. pip install trafilatura newspaper3k scrapy beautifulsoup4 lxml Pillow
+    3. python web_server_local.py
+
+Problem: Port 5000 already in use
+Solution: Change the port in web_server_local.py (line ~829)
+    app.run(host='0.0.0.0', port=5001, ...)  # Change 5000 to 5001
+
+Problem: Scraping finds no articles
+Solution: Try a different news website or increase max articles
+
+================================================================================
+FOLDER STRUCTURE
+================================================================================
+
+After scraping, your files will be organized as:
+
+scraping_output/
+└── session_XXXXXXXXXX/
+    ├── Article_Title_1/
+    │   ├── article.json    (article content)
+    │   └── image.jpg       (main image)
+    └── Article_Title_2/
+        ├── article.json
+        └── image.jpg
+
+text_output/
+└── session_XXXXXXXXXX/
+    └── Article_Title_1/
+        └── article.txt     (plain text version)
+
+summary_output/
+└── session_XXXXXXXXXX/
+    └── Article_Title_1/
+        ├── article_text_summary.json  (AI summary)
+        └── image_summary.json         (AI caption)
+
+================================================================================
+QUICK START
+================================================================================
+
+1. Activate virtual environment:
+   & c:/Internship/BOCK/local1/web_venv/Scripts/Activate.ps1
+
+2. Install dependencies (FIRST TIME ONLY):
+   Run: install_dependencies.bat
+
+3. Start server:
+   python web_server_local.py
+
+4. Open browser:
+   http://localhost:5000
+
+5. Scrape articles:
+   - Tab 1: Enter URL and click "Start Scraping"
+   - Tab 2: Convert JSON to text
+   - Tab 3: Generate AI summaries
+
+================================================================================
+NOTES
+================================================================================
+
+- First AI run downloads models (~2GB) - takes 10-20 minutes
+- All data is stored locally in the three output folders
+- Session IDs are timestamps (e.g., session_1760109785)
+- You can browse/download files using "View Bucket" button
+- No cloud services - everything runs on your computer!
+
+================================================================================
+
